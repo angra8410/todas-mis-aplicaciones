@@ -23,26 +23,22 @@ Se ha implementado un sistema CI/CD completo con dos componentes principales:
 ### 2. Características Principales Implementadas
 
 #### ✅ Detección Inteligente de PDFs
-```yaml
-# Búsqueda en carpetas comunes de output
-- Busca en: output/, dist/, build/
-- Patrones: *cv*.pdf, *hoja_de_vida*.pdf, *resume*.pdf, *curriculum*.pdf
+**Búsqueda en carpetas comunes de output:**
+- Busca en: `output/`, `dist/`, `build/`
+- Patrones: `*cv*.pdf`, `*hoja_de_vida*.pdf`, `*resume*.pdf`, `*curriculum*.pdf`
 - Selecciona: El archivo más reciente automáticamente
 - Validación: Verifica que sea un PDF válido
-```
 
 #### ✅ Extracción Automática de Fechas
-```yaml
-# Múltiples métodos de extracción:
+**Múltiples métodos de extracción:**
 1. Fecha en nombre del archivo (YYYY-MM-DD o YYYYMMDD)
 2. Fecha en mensaje de commit
 3. Fecha actual como fallback
 4. Validación de formato y validez
-```
 
 #### ✅ Organización por Fecha
-```yaml
-# Estructura automática:
+**Estructura automática:**
+```
 aplicaciones/
 └── YYYY-MM-DD/
     ├── cv_nombre.pdf      # Solo la hoja de vida
@@ -50,31 +46,25 @@ aplicaciones/
 ```
 
 #### ✅ Prevención de Duplicados
-```yaml
-# Verificaciones implementadas:
+**Verificaciones implementadas:**
 - Detección de archivos existentes
 - Comparación de checksums (MD5)
 - Backup automático si el archivo cambió
 - Skip si el archivo es idéntico
-```
 
 #### ✅ Seguridad y Autenticación
-```yaml
-# Uso de PAT (Personal Access Token):
+**Uso de PAT (Personal Access Token):**
 - Token almacenado en GitHub Secrets
-- Referencia: ${{ secrets.PAT_TODAS_MIS_APLICACIONES }}
+- Referencia: `${{ secrets.PAT_TODAS_MIS_APLICACIONES }}`
 - Permisos mínimos necesarios (repo + workflow)
-```
 
 #### ✅ Logs Detallados y Auditoría
-```yaml
-# Cada paso incluye:
+**Cada paso incluye:**
 - Emojis para facilitar lectura (🔍 📄 ✅ ❌)
 - Información del archivo procesado
 - Checksums para verificación
 - URLs a commits y workflows
 - Resumen visual en GitHub Actions
-```
 
 ### 3. Validaciones Implementadas
 
@@ -285,5 +275,5 @@ El sistema es **robusto, seguro, auditable y fácil de usar**.
 ---
 
 **Implementado por**: GitHub Copilot
-**Fecha**: 2025-10-15
+**Fecha**: Octubre 2025
 **Estado**: ✅ Completo y listo para producción
