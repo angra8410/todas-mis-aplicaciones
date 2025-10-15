@@ -1,0 +1,79 @@
+name: Receive CV from Aplicaciones Laborales
+
+# Este workflow se activa mediante repository_dispatch desde el repositorio aplicaciones_laborales
+# o puede ser ejecutado manualmente para pruebas
+on:
+  repository_dispatch:
+    types: [copy-cv-pdf]
+  workflow_dispatch:
+    inputs:
+      cv_date:
+        description: 'Fecha de la aplicación laboral (YYYY-MM-DD)'
+        required: true
+        type: string
+      pdf_url:
+        description: 'URL del PDF de la hoja de vida (para pruebas manuales)'
+        required: false
+        type: string
+
+jobs:
+  receive-cv:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout todas-mis-aplicaciones repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate date format
+        id: validate
+        run: |
+          if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
+            CV_DATE="${{ github.event.client_payload.cv_date }}"
+            PDF_PATH="${{ github.event.client_payload.pdf_path }}"
+          else
+            CV_DATE="${{ inputs.cv_date }}"
+            PDF_PATH="${{ inputs.pdf_url }}"
+          fi
+
+          echo "cv_date=$CV_DATE" >> $GITHUB_OUTPUT
+          echo "pdf_path=$PDF_PATH" >> $GITHUB_OUTPUT
+
+          # Validar formato de fecha YYYY-MM-DD
+          if ! [[ $CV_DATE =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+            echo "❌ Error: La fecha debe estar en formato YYYY-MM-DD"
+            exit 1
+          fi
+
+          echo "✅ Fecha válida: $CV_DATE"
+
+      - name: Create date-based folder structure
+        run: |
+          CV_DATE="${{ steps.validate.outputs.cv_date }}"
+          mkdir -p "aplicaciones/$CV_DATE"
+          echo "📁 Carpeta creada: aplicaciones/$CV_DATE"
+
+      - name: Log workflow information
+        run: |
+          echo "=== Información del Workflow ==="
+          echo "Evento: ${{ github.event_name }}"
+          echo "Fecha de aplicación: ${{ steps.validate.outputs.cv_date }}"
+          echo "Ruta del PDF: ${{ steps.validate.outputs.pdf_path }}"
+          echo "==============================="
+
+      - name: Verify and commit changes
+        run: |
+          CV_DATE="${{ steps.validate.outputs.cv_date }}"
+
+          # Verificar si hay cambios
+          if [[ -n $(git status --porcelain) ]]; then
+            git config user.name "GitHub Actions Bot"
+            git config user.email "actions@github.com"
+            git add .
+            git commit -m "📄 Agregar carpeta para aplicación del $CV_DATE"
+            git push
+            echo "✅ Cambios guardados exitosamente"
+          else
+            echo "ℹ️ No hay cambios para guardar"
+          fi
