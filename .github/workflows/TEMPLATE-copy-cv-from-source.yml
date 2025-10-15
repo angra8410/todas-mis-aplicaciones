@@ -1,0 +1,344 @@
+name: Copy CV PDF to Todas Mis Aplicaciones
+
+# IMPORTANTE: Este workflow debe estar en el repositorio 'aplicaciones_laborales'
+# Este archivo se proporciona como PLANTILLA/EJEMPLO para ser copiado al repositorio fuente
+
+on:
+  workflow_run:
+    workflows: ["Generate CV PDF"]  # Nombre del workflow que genera el PDF
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      cv_date:
+        description: 'Fecha de la aplicación laboral (YYYY-MM-DD)'
+        required: true
+        type: string
+
+jobs:
+  copy-cv-to-todas-mis-aplicaciones:
+    runs-on: ubuntu-latest
+    # Solo ejecutar si el workflow anterior fue exitoso
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+
+    steps:
+      - name: Checkout aplicaciones_laborales repository
+        uses: actions/checkout@v4
+        with:
+          # Checkout del repositorio fuente donde se genera el PDF
+          fetch-depth: 1
+
+      - name: Find generated CV PDF
+        id: find_pdf
+        run: |
+          echo "🔍 Buscando archivo PDF de la hoja de vida generada..."
+
+          # Buscar el PDF más reciente de la hoja de vida
+          # Ajustar el patrón de búsqueda según la convención de nombres
+          # Busca primero en carpetas comunes de output
+
+          # Patrón 1: Buscar en carpetas de output comunes
+          PDF_FILE=$(find . -type f \( -path "*/output/*.pdf" -o -path "*/dist/*.pdf" -o -path "*/build/*.pdf" \) \
+            \( -name "*cv*.pdf" -o -name "*hoja_de_vida*.pdf" -o -name "*resume*.pdf" -o -name "*curriculum*.pdf" \) \
+            -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2-)
+
+          # Patrón 2: Si no se encuentra, buscar en todo el repositorio (excluyendo node_modules, .git, etc)
+          if [ -z "$PDF_FILE" ]; then
+            PDF_FILE=$(find . -type f \
+              -not -path "*/node_modules/*" \
+              -not -path "*/.git/*" \
+              -not -path "*/vendor/*" \
+              \( -name "*cv*.pdf" -o -name "*hoja_de_vida*.pdf" -o -name "*resume*.pdf" -o -name "*curriculum*.pdf" \) \
+              -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2-)
+          fi
+
+          if [ -z "$PDF_FILE" ]; then
+            echo "❌ Error: No se encontró ningún archivo PDF de hoja de vida"
+            echo "Buscado en: output/, dist/, build/ y todo el repositorio"
+            echo "Patrones buscados: *cv*.pdf, *hoja_de_vida*.pdf, *resume*.pdf, *curriculum*.pdf"
+            exit 1
+          fi
+
+          echo "✅ PDF encontrado: $PDF_FILE"
+          echo "pdf_file=$PDF_FILE" >> $GITHUB_OUTPUT
+
+          # Obtener solo el nombre del archivo
+          PDF_FILENAME=$(basename "$PDF_FILE")
+          echo "pdf_filename=$PDF_FILENAME" >> $GITHUB_OUTPUT
+
+          # Verificar que el archivo existe y tiene contenido
+          if [ ! -s "$PDF_FILE" ]; then
+            echo "❌ Error: El archivo PDF está vacío"
+            exit 1
+          fi
+
+          FILE_SIZE=$(stat -c%s "$PDF_FILE" 2>/dev/null || stat -f%z "$PDF_FILE")
+          echo "📊 Tamaño del archivo: $FILE_SIZE bytes"
+
+          # Validar que es un PDF válido (verificar magic number)
+          if ! file "$PDF_FILE" | grep -q "PDF"; then
+            echo "⚠️ Advertencia: El archivo puede no ser un PDF válido"
+          else
+            echo "✅ Archivo PDF validado correctamente"
+          fi
+
+      - name: Determine application date
+        id: get_date
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            CV_DATE="${{ inputs.cv_date }}"
+            echo "📅 Fecha proporcionada manualmente: $CV_DATE"
+          else
+            # Intentar extraer fecha del nombre del archivo PDF
+            PDF_FILE="${{ steps.find_pdf.outputs.pdf_file }}"
+            PDF_FILENAME="${{ steps.find_pdf.outputs.pdf_filename }}"
+
+            # Patrón 1: Buscar fecha en formato YYYY-MM-DD en el nombre del archivo
+            EXTRACTED_DATE=$(echo "$PDF_FILENAME" | grep -oP '\d{4}-\d{2}-\d{2}' | head -1)
+
+            # Patrón 2: Buscar fecha en formato YYYYMMDD en el nombre del archivo
+            if [ -z "$EXTRACTED_DATE" ]; then
+              TEMP_DATE=$(echo "$PDF_FILENAME" | grep -oP '\d{8}' | head -1)
+              if [ -n "$TEMP_DATE" ]; then
+                # Convertir YYYYMMDD a YYYY-MM-DD
+                EXTRACTED_DATE="${TEMP_DATE:0:4}-${TEMP_DATE:4:2}-${TEMP_DATE:6:2}"
+              fi
+            fi
+
+            # Patrón 3: Buscar en el último commit message
+            if [ -z "$EXTRACTED_DATE" ]; then
+              EXTRACTED_DATE=$(git log -1 --pretty=%B | grep -oP '\d{4}-\d{2}-\d{2}' | head -1)
+              if [ -n "$EXTRACTED_DATE" ]; then
+                echo "📅 Fecha extraída del mensaje de commit: $EXTRACTED_DATE"
+              fi
+            fi
+
+            # Si no se encuentra fecha, usar la fecha actual
+            if [ -z "$EXTRACTED_DATE" ]; then
+              CV_DATE=$(date +%Y-%m-%d)
+              echo "📅 No se encontró fecha en el archivo o commit, usando fecha actual: $CV_DATE"
+            else
+              CV_DATE="$EXTRACTED_DATE"
+              echo "📅 Fecha extraída del nombre del archivo: $CV_DATE"
+            fi
+          fi
+
+          # Validar formato de fecha
+          if ! [[ $CV_DATE =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+            echo "❌ Error: La fecha debe estar en formato YYYY-MM-DD"
+            echo "Fecha recibida: $CV_DATE"
+            exit 1
+          fi
+
+          # Validar que la fecha es válida (no futuro muy lejano, etc.)
+          if date -d "$CV_DATE" >/dev/null 2>&1; then
+            echo "✅ Fecha validada: $CV_DATE"
+          else
+            echo "❌ Error: La fecha $CV_DATE no es válida"
+            exit 1
+          fi
+
+          echo "cv_date=$CV_DATE" >> $GITHUB_OUTPUT
+
+      - name: Checkout todas-mis-aplicaciones repository
+        uses: actions/checkout@v4
+        with:
+          repository: angra8410/todas-mis-aplicaciones
+          token: ${{ secrets.PAT_TODAS_MIS_APLICACIONES }}
+          path: todas-mis-aplicaciones
+          fetch-depth: 1
+
+      - name: Create date-based folder and copy PDF
+        run: |
+          CV_DATE="${{ steps.get_date.outputs.cv_date }}"
+          PDF_FILE="${{ steps.find_pdf.outputs.pdf_file }}"
+          PDF_FILENAME="${{ steps.find_pdf.outputs.pdf_filename }}"
+
+          echo "📁 Creando carpeta para la fecha: $CV_DATE"
+          DEST_DIR="todas-mis-aplicaciones/aplicaciones/$CV_DATE"
+          mkdir -p "$DEST_DIR"
+
+          # Verificar si el archivo ya existe
+          if [ -f "$DEST_DIR/$PDF_FILENAME" ]; then
+            echo "⚠️ El archivo $PDF_FILENAME ya existe en $DEST_DIR/"
+
+            # Comparar checksums
+            SRC_CHECKSUM=$(md5sum "$PDF_FILE" | cut -d' ' -f1)
+            DEST_CHECKSUM=$(md5sum "$DEST_DIR/$PDF_FILENAME" | cut -d' ' -f1)
+
+            if [ "$SRC_CHECKSUM" == "$DEST_CHECKSUM" ]; then
+              echo "✅ El archivo es idéntico, no se requiere actualización"
+              echo "skip_commit=true" >> $GITHUB_OUTPUT
+              exit 0
+            else
+              echo "⚠️ El archivo existe pero es diferente, se actualizará"
+              # Crear backup del archivo existente
+              TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+              mv "$DEST_DIR/$PDF_FILENAME" "$DEST_DIR/${PDF_FILENAME%.pdf}_backup_${TIMESTAMP}.pdf"
+              echo "📦 Backup creado: ${PDF_FILENAME%.pdf}_backup_${TIMESTAMP}.pdf"
+            fi
+          fi
+
+          echo "📄 Copiando PDF: $PDF_FILENAME"
+          cp "$PDF_FILE" "$DEST_DIR/$PDF_FILENAME"
+
+          # Verificar que el archivo se copió correctamente
+          if [ ! -f "$DEST_DIR/$PDF_FILENAME" ]; then
+            echo "❌ Error: No se pudo copiar el archivo PDF"
+            exit 1
+          fi
+
+          # Verificar integridad del archivo copiado
+          SRC_CHECKSUM=$(md5sum "$PDF_FILE" | cut -d' ' -f1)
+          DEST_CHECKSUM=$(md5sum "$DEST_DIR/$PDF_FILENAME" | cut -d' ' -f1)
+
+          if [ "$SRC_CHECKSUM" != "$DEST_CHECKSUM" ]; then
+            echo "❌ Error: El checksum del archivo copiado no coincide"
+            echo "Origen: $SRC_CHECKSUM"
+            echo "Destino: $DEST_CHECKSUM"
+            exit 1
+          fi
+
+          echo "✅ Archivo copiado y verificado exitosamente"
+          echo "📍 Ubicación: $DEST_DIR/$PDF_FILENAME"
+          echo "🔐 Checksum: $DEST_CHECKSUM"
+
+          # Crear un archivo README en la carpeta si no existe
+          if [ ! -f "$DEST_DIR/README.md" ]; then
+            cat > "$DEST_DIR/README.md" << EOF
+          # Aplicación Laboral - $CV_DATE
+
+          ## Documentos
+          - Hoja de vida: [$PDF_FILENAME](./$PDF_FILENAME)
+
+          ## Información
+          - Fecha de aplicación: $CV_DATE
+          - Fecha de generación: $(date +%Y-%m-%d\ %H:%M:%S\ UTC)
+          - Workflow: ${{ github.workflow }}
+          - Run ID: [${{ github.run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          - Commit: ${{ github.sha }}
+
+          ## Verificación
+          - MD5 Checksum: \`$DEST_CHECKSUM\`
+          - Tamaño: $(stat -c%s "$DEST_DIR/$PDF_FILENAME" 2>/dev/null || stat -f%z "$DEST_DIR/$PDF_FILENAME") bytes
+          EOF
+            echo "📝 README.md creado"
+          fi
+
+          echo "skip_commit=false" >> $GITHUB_OUTPUT
+
+      - name: Commit and push to todas-mis-aplicaciones
+        id: commit_push
+        run: |
+          cd todas-mis-aplicaciones
+          CV_DATE="${{ steps.get_date.outputs.cv_date }}"
+          PDF_FILENAME="${{ steps.find_pdf.outputs.pdf_filename }}"
+
+          # Configurar git
+          git config user.name "GitHub Actions Bot"
+          git config user.email "actions@github.com"
+
+          # Verificar estado del repositorio
+          echo "📊 Estado del repositorio:"
+          git status
+
+          # Agregar solo los archivos nuevos en la carpeta de la fecha específica
+          git add "aplicaciones/$CV_DATE/"
+
+          # Verificar que hay cambios para commitear
+          if git diff --staged --quiet; then
+            echo "ℹ️ No hay cambios para guardar (el archivo ya existe y es idéntico)"
+            echo "committed=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Mostrar archivos que se van a commitear
+          echo "📝 Archivos a commitear:"
+          git diff --staged --name-only
+
+          # Commit con mensaje descriptivo
+          git commit -m "📄 Agregar hoja de vida para aplicación del $CV_DATE
+
+          - Archivo: $PDF_FILENAME
+          - Fecha de aplicación: $CV_DATE
+          - Workflow: ${{ github.workflow }}
+          - Run ID: ${{ github.run_id }}
+          - Repositorio fuente: ${{ github.repository }}
+          - Commit fuente: ${{ github.sha }}"
+
+          # Push al repositorio destino con reintentos
+          echo "⬆️ Enviando cambios al repositorio todas-mis-aplicaciones..."
+
+          MAX_RETRIES=3
+          RETRY_COUNT=0
+
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            if git push; then
+              echo "✅ Push exitoso"
+              echo "committed=true" >> $GITHUB_OUTPUT
+              break
+            else
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+                echo "⚠️ Push falló, reintentando ($RETRY_COUNT/$MAX_RETRIES)..."
+                sleep 5
+                git pull --rebase
+              else
+                echo "❌ Push falló después de $MAX_RETRIES intentos"
+                exit 1
+              fi
+            fi
+          done
+
+          echo "✅ Proceso completado exitosamente"
+
+      - name: Log completion
+        if: success()
+        run: |
+          CV_DATE="${{ steps.get_date.outputs.cv_date }}"
+          PDF_FILENAME="${{ steps.find_pdf.outputs.pdf_filename }}"
+          COMMITTED="${{ steps.commit_push.outputs.committed }}"
+
+          echo "======================================"
+          echo "✅ PROCESO COMPLETADO EXITOSAMENTE"
+          echo "======================================"
+          echo "Archivo: $PDF_FILENAME"
+          echo "Fecha: $CV_DATE"
+          echo "Destino: aplicaciones/$CV_DATE/"
+
+          if [ "$COMMITTED" == "true" ]; then
+            echo "Estado: Archivo nuevo copiado y commiteado"
+          else
+            echo "Estado: Archivo ya existía (sin cambios)"
+          fi
+
+          echo "======================================"
+
+          # Crear resumen para GitHub Actions
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## ✅ Hoja de Vida Copiada Exitosamente
+
+          ### 📄 Información del Archivo
+          - **Nombre**: \`$PDF_FILENAME\`
+          - **Fecha de aplicación**: $CV_DATE
+          - **Ubicación**: \`aplicaciones/$CV_DATE/$PDF_FILENAME\`
+
+          ### 🔄 Estado de la Operación
+          - **Workflow**: ${{ github.workflow }}
+          - **Run ID**: [${{ github.run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          - **Commit**: \`${{ github.sha }}\`
+          - **Resultado**: $([ "$COMMITTED" == "true" ] && echo "✅ Archivo copiado y commiteado" || echo "ℹ️ Archivo ya existía")
+
+          ### 🔗 Enlaces
+          - [Ver aplicación en todas-mis-aplicaciones](https://github.com/angra8410/todas-mis-aplicaciones/tree/main/aplicaciones/$CV_DATE)
+          - [Ver README de la aplicación](https://github.com/angra8410/todas-mis-aplicaciones/blob/main/aplicaciones/$CV_DATE/README.md)
+          EOF
+
+      - name: Log failure
+        if: failure()
+        run: |
+          echo "======================================"
+          echo "❌ ERROR EN EL PROCESO"
+          echo "======================================"
+          echo "Revise los logs anteriores para más detalles"
+          echo "======================================"
